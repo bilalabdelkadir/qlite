@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -30,16 +31,20 @@ func main() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Fatal(err)
+			HandleError(conn, err)
 		}
 
-		HandleStartup(conn)
+		HandleSslRequest(conn)
 		for {
 			ReadyForQuery(conn)
-			statement := HandleStatement(conn)
+			statement, err := HandleStatement(conn)
+			if err != nil {
+				break
+			}
 			columns, rows, rowsAffected, err := HandleExecute(db, statement)
 			if err != nil {
-				log.Fatal(err)
+				HandleError(conn, err)
+				continue
 			}
 			if columns != nil {
 				SendRowDescription(conn, columns)
@@ -70,6 +75,27 @@ func ExtractCommand(statement string) string {
 	command := strings.ToUpper(parts[0])
 
 	return command
+
+}
+
+func HandleError(conn net.Conn, err error) {
+	conn.Write([]byte("E"))
+	severity := "ERROR\x00"
+	message := err.Error() + "\x00"
+
+	endMarker := []byte{0}
+
+	payloadLength := len(severity) + 1 + len(message) + 1 + len(endMarker)
+	lengthBuffer := make([]byte, 4)
+	binary.BigEndian.PutUint32(lengthBuffer, uint32(payloadLength+4))
+
+	conn.Write(lengthBuffer)
+
+	conn.Write([]byte("S"))
+	conn.Write([]byte(severity))
+	conn.Write([]byte("M"))
+	conn.Write([]byte(message))
+	conn.Write(endMarker)
 
 }
 
@@ -120,19 +146,32 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 		return nil, nil, 0, fmt.Errorf("unsupported SQL command: %s", command)
 	}
 }
-func HandleStartup(conn net.Conn) {
-	firstMessageBuffer := make([]byte, 4)
-
-	io.ReadFull(conn, firstMessageBuffer)
-
-	bodyLength := binary.BigEndian.Uint32(firstMessageBuffer)
+func HandleSslRequest(conn net.Conn) {
+	lengthBuffer := make([]byte, 4)
+	io.ReadFull(conn, lengthBuffer)
 
 	protocolBuffer := make([]byte, 4)
-
 	io.ReadFull(conn, protocolBuffer)
 
 	protocol := binary.BigEndian.Uint32(protocolBuffer)
-	fmt.Println("this is protocol ", protocol)
+
+	switch protocol {
+	case 80877103:
+		conn.Write([]byte("N"))
+		newLengthBuffer := make([]byte, 4)
+		io.ReadFull(conn, newLengthBuffer)
+		io.ReadFull(conn, make([]byte, 4))
+		HandleStartup(conn, newLengthBuffer)
+	case 196608:
+		HandleStartup(conn, lengthBuffer)
+	default:
+		HandleStartup(conn, lengthBuffer)
+	}
+}
+
+func HandleStartup(conn net.Conn, length []byte) {
+
+	bodyLength := binary.BigEndian.Uint32(length)
 
 	bodyBuffer := make([]byte, bodyLength-8)
 
@@ -169,7 +208,7 @@ func HandleStartup(conn net.Conn) {
 
 }
 
-func HandleStatement(conn net.Conn) string {
+func HandleStatement(conn net.Conn) (string, error) {
 	typeBuffer := make([]byte, 1)
 
 	io.ReadFull(conn, typeBuffer)
@@ -177,7 +216,7 @@ func HandleStatement(conn net.Conn) string {
 	msgType := string(typeBuffer)
 
 	if msgType != "Q" {
-		log.Fatal("wrong type")
+		HandleError(conn, errors.New("Wrong type."))
 	}
 
 	statementLengthBuffer := make([]byte, 4)
@@ -188,11 +227,14 @@ func HandleStatement(conn net.Conn) string {
 
 	statementBuffer := make([]byte, statementLength-4)
 
-	io.ReadFull(conn, statementBuffer)
+	_, err := io.ReadFull(conn, statementBuffer)
+	if err != nil {
+		return "", err
+	}
 
 	statement := string(statementBuffer)
 
-	return statement
+	return statement, nil
 }
 
 func ReadyForQuery(conn net.Conn) {
