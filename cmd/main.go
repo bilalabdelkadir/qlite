@@ -8,22 +8,27 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
+func HandleTenantDb(dbName string) (*sql.DB, error) {
+	dbFile := fmt.Sprintf("./%s.db?_busy_timeout=5000&_journal_mode=WAL", dbName)
+	db, err := sql.Open("sqlite3", dbFile)
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}
 func main() {
 	listener, err := net.Listen("tcp", ":5433")
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	db, err := sql.Open("sqlite3", "./test.db")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
 
 	fmt.Println("tcp connection is running on 5433 happy hacking")
 	defer listener.Close()
@@ -31,33 +36,46 @@ func main() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			HandleError(conn, err)
+			fmt.Println(err)
+			continue
 		}
+		go handleConnection(conn)
 
-		HandleSslRequest(conn)
-		for {
-			ReadyForQuery(conn)
-			statement, err := HandleStatement(conn)
-			if err != nil {
-				break
+	}
+
+}
+
+func handleConnection(conn net.Conn) {
+
+	lengthBuffer := HandleSslRequest(conn)
+	db, err := HandleStartup(conn, lengthBuffer)
+	if err != nil {
+		conn.Close()
+		return
+	}
+	defer db.Close()
+
+	for {
+		ReadyForQuery(conn)
+		statement, err := HandleStatement(conn)
+		if err != nil {
+			break
+		}
+		columns, rows, rowsAffected, err := HandleExecute(db, statement)
+		if err != nil {
+			HandleError(conn, err)
+			continue
+		}
+		if columns != nil {
+			SendRowDescription(conn, columns)
+
+			for _, row := range rows {
+				SendDataRow(conn, row)
 			}
-			columns, rows, rowsAffected, err := HandleExecute(db, statement)
-			if err != nil {
-				HandleError(conn, err)
-				continue
-			}
-			if columns != nil {
-				SendRowDescription(conn, columns)
+			SendCommandComplete(conn, statement, rowsAffected)
 
-				for _, row := range rows {
-					SendDataRow(conn, row)
-				}
-				SendCommandComplete(conn, statement, rowsAffected)
-
-			} else {
-				SendCommandComplete(conn, statement, rowsAffected)
-
-			}
+		} else {
+			SendCommandComplete(conn, statement, rowsAffected)
 
 		}
 
@@ -103,6 +121,37 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 	command := ExtractCommand(statement)
 
 	switch command {
+	case "BRANCH":
+		fmt.Printf("raw statement bytes: %q\n", statement)
+		parts := strings.Fields(statement)
+		if len(parts) < 4 || strings.ToUpper(parts[2]) != "TO" {
+			return nil, nil, 0, fmt.Errorf("invalid BRANCH statement: expected format 'BRANCH <source> TO <target>;'")
+		}
+
+		source := parts[1]
+		target := strings.TrimRight(parts[3], "\x00")
+		target = strings.TrimSpace(strings.TrimSuffix(target, ";"))
+
+		file, err := os.Open(source + ".db")
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("failed to open source database '%s.db': %v", source, err)
+		}
+		defer file.Close()
+
+		newFile, err := os.Create(target + ".db")
+		if err != nil {
+			absPath, _ := filepath.Abs(target + ".db")
+			return nil, nil, 0, fmt.Errorf("failed to create target database '%s' at '%s': %v", target+".db", absPath, err)
+		}
+		defer newFile.Close()
+
+		_, err = io.Copy(newFile, file)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("failed to copy data from '%s.db' to '%s.db': %v", source, target, err)
+		}
+
+		return nil, nil, 1, nil
+
 	case "SELECT":
 		r, e := db.Query(statement)
 		if e != nil {
@@ -146,7 +195,7 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 		return nil, nil, 0, fmt.Errorf("unsupported SQL command: %s", command)
 	}
 }
-func HandleSslRequest(conn net.Conn) {
+func HandleSslRequest(conn net.Conn) []byte {
 	lengthBuffer := make([]byte, 4)
 	io.ReadFull(conn, lengthBuffer)
 
@@ -161,15 +210,15 @@ func HandleSslRequest(conn net.Conn) {
 		newLengthBuffer := make([]byte, 4)
 		io.ReadFull(conn, newLengthBuffer)
 		io.ReadFull(conn, make([]byte, 4))
-		HandleStartup(conn, newLengthBuffer)
+		return newLengthBuffer
 	case 196608:
-		HandleStartup(conn, lengthBuffer)
+		return lengthBuffer
 	default:
-		HandleStartup(conn, lengthBuffer)
+		return lengthBuffer
 	}
 }
 
-func HandleStartup(conn net.Conn, length []byte) {
+func HandleStartup(conn net.Conn, length []byte) (*sql.DB, error) {
 
 	bodyLength := binary.BigEndian.Uint32(length)
 
@@ -205,6 +254,13 @@ func HandleStartup(conn net.Conn, length []byte) {
 	binary.BigEndian.PutUint32(authBuffer, 0)
 
 	conn.Write(authBuffer)
+
+	db, err := HandleTenantDb(payload["database"])
+	if err != nil {
+		return nil, err
+
+	}
+	return db, nil
 
 }
 
