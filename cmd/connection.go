@@ -79,6 +79,7 @@ func HandleStartup(conn net.Conn, length []byte) (*sql.DB, error) {
 }
 
 func handleConnection(conn net.Conn) {
+	isInTransaction := false
 
 	lengthBuffer := HandleSslRequest(conn)
 	db, err := HandleStartup(conn, lengthBuffer)
@@ -94,22 +95,36 @@ func handleConnection(conn net.Conn) {
 		if err != nil {
 			break
 		}
-		columns, rows, rowsAffected, err := HandleExecute(db, statement)
-		if err != nil {
-			HandleError(conn, err)
-			continue
+		command := ExtractCommand(statement)
+		switch command {
+		case "BEGIN":
+			isInTransaction = true
+		case "COMMIT", "ROLLBACK":
+			isInTransaction = false
 		}
-		if columns != nil {
-			SendRowDescription(conn, columns)
 
-			for _, row := range rows {
-				SendDataRow(conn, row)
-			}
-			SendCommandComplete(conn, statement, rowsAffected)
+		isRead := IsReadQuery(statement) && !isInTransaction && len(ReplicaUrls) > 0
+
+		if isRead {
 
 		} else {
-			SendCommandComplete(conn, statement, rowsAffected)
+			columns, rows, rowsAffected, err := HandleExecute(db, statement)
+			if err != nil {
+				HandleError(conn, err)
+				continue
+			}
+			if columns != nil {
+				SendRowDescription(conn, columns)
 
+				for _, row := range rows {
+					SendDataRow(conn, row)
+				}
+				SendCommandComplete(conn, statement, rowsAffected)
+
+			} else {
+				SendCommandComplete(conn, statement, rowsAffected)
+
+			}
 		}
 
 	}

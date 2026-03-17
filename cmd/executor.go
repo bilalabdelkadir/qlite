@@ -12,6 +12,21 @@ import (
 	"strings"
 )
 
+func IsReadQuery(statement string) bool {
+	s := strings.TrimSpace(strings.ToUpper(statement))
+
+	switch {
+	case strings.HasPrefix(s, "SELECT"):
+		return true
+	case strings.HasPrefix(s, "PRAGMA"):
+		return true
+	case strings.HasPrefix(s, "EXPLAIN"):
+		return true
+	default:
+		return false
+	}
+}
+
 func ExtractCommand(statement string) string {
 	statement = strings.TrimSpace(statement)
 	if statement == "" {
