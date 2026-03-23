@@ -19,6 +19,7 @@ type ReplicaConn struct {
 	LastUsed time.Time
 }
 
+// map[dbName]map[replicaURL]*ReplicaConn
 var Connections map[string]map[string]*ReplicaConn
 
 func main() {
