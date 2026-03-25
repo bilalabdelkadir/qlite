@@ -40,10 +40,15 @@ func HandleError(conn net.Conn, err error) {
 	conn.Write(buf.Bytes())
 }
 
-func ReadyForQuery(conn net.Conn) {
+func ReadyForQuery(conn net.Conn, isInTransaction bool) {
 	conn.Write([]byte("Z"))
 	binary.Write(conn, binary.BigEndian, uint32(5))
-	conn.Write([]byte("I"))
+	if isInTransaction {
+		conn.Write([]byte("T"))
+	} else {
+		conn.Write([]byte("I"))
+
+	}
 }
 
 func SendDataRow(conn net.Conn, values []string) {

@@ -8,7 +8,10 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync/atomic"
 )
+
+var counter uint64
 
 func HandleSslRequest(conn net.Conn) []byte {
 	lengthBuffer := make([]byte, 4)
@@ -93,7 +96,7 @@ func handleConnection(conn net.Conn) {
 	defer db.Close()
 
 	for {
-		ReadyForQuery(conn)
+		ReadyForQuery(conn, isInTransaction)
 		statement, err := HandleStatement(conn)
 		if err != nil {
 			break
@@ -124,7 +127,10 @@ func handleConnection(conn net.Conn) {
 }
 
 func handleReadQuery(conn net.Conn, dbName string, statement string) error {
-	randomReplicaURL := replicaUrls[0]
+	index := atomic.AddUint64(&counter, 1) % uint64(len(replicaUrls))
+
+	randomReplicaURL := replicaUrls[int(index)]
+
 	repConn, err := GetOrCreateReplicaConn(dbName, randomReplicaURL)
 	if err != nil {
 		log.Println(err)
