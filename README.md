@@ -13,7 +13,7 @@ A PostgreSQL wire protocol proxy that runs SQLite databases underneath. Connect 
 ## Prerequisites
 
 - Go 1.25+
-- CGO enabled (`CGO_ENABLED=1`) — required by [go-sqlite3](https://github.com/mattn/go-sqlite3)
+- CGO enabled (`CGO_ENABLED=1`) — required by [go-libsql](https://github.com/tursodatabase/go-libsql)
 - A C compiler (gcc/clang)
 
 ## Installation
@@ -39,28 +39,130 @@ go build -o qlite ./cmd
 
 ## Connecting
 
-Use any PostgreSQL client. The database name becomes the SQLite file:
+QLite only supports the **simple query protocol**. Some clients use the extended query protocol by default and must be configured to use simple mode.
 
-```bash
-# Connects to (or creates) myapp.db
-psql -h localhost -p 5433 -d myapp
+Connection URL format:
 
-# Run queries as usual
-psql> CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
-psql> INSERT INTO users (name) VALUES ('alice');
-psql> SELECT * FROM users;
-
-# Branch a database
-psql> BRANCH myapp TO myapp_copy;
+```
+postgres://postgres@localhost:5433/mydb
 ```
 
-## How It Works
+The database name in the URL (`mydb`) maps to a SQLite file (`mydb.db`). The username can be anything — authentication is not enforced.
 
-1. Client connects via TCP and negotiates the PostgreSQL startup sequence (SSL rejection, authentication)
-2. The `database` parameter from the connection maps to a SQLite file (`<database>.db`) opened with WAL mode
-3. SQL statements arrive as simple query messages (`Q`), get parsed and executed against SQLite
-4. Results are encoded back into PostgreSQL wire format (RowDescription, DataRow, CommandComplete)
-5. The custom `BRANCH` command copies the underlying `.db` file to create a snapshot
+### psql
+
+Works out of the box (uses simple protocol by default):
+
+```bash
+psql "postgres://postgres@localhost:5433/mydb"
+```
+
+### pgx (Go)
+
+pgx defaults to the extended query protocol. You **must** set simple protocol mode:
+
+```go
+dbUrl := "postgres://postgres@localhost:5433/mydb"
+config, err := pgx.ParseConfig(dbUrl)
+if err != nil {
+    log.Fatal(err)
+}
+config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+
+conn, err := pgx.ConnectConfig(context.Background(), config)
+```
+
+### node-postgres (JavaScript)
+
+Works by default — `pg` uses the simple protocol for `client.query()` with string arguments:
+
+```js
+const client = new Client({ connectionString: 'postgres://postgres@localhost:5433/mydb' })
+await client.connect()
+await client.query('SELECT * FROM users')
+```
+
+### psycopg2 (Python)
+
+Works by default:
+
+```python
+conn = psycopg2.connect("host=localhost port=5433 dbname=mydb user=postgres")
+cur = conn.cursor()
+cur.execute("SELECT * FROM users")
+```
+
+## Architecture
+
+```
+                         ┌─────────────────────────────────────────────┐
+                         │              QLite Proxy                    │
+                         │                                             │
+psql ──────┐             │  ┌───────────┐    ┌───────────────────┐    │
+           │  Postgres   │  │ Protocol  │    │    Executor       │    │    ┌──────────────┐
+pgx ───────┼─ wire ──────┼─►│ Handler   ├───►│                   ├────┼───►│ myapp.db     │
+           │  protocol   │  │ (Q msgs)  │    │ SELECT,INSERT,... │    │    │ (SQLite/WAL) │
+node-pg ───┘             │  └───────────┘    └───────────────────┘    │    └──────────────┘
+                         │                                             │
+                         │        │ writes replicated async            │
+                         │        ▼                                    │
+                         │  ┌───────────────┐    Postgres wire         │
+                         │  │ Replica Conn  ├────────────────────┐    │
+                         │  │ Pool          │                    │    │
+                         │  └───────────────┘                    │    │
+                         │                                       │    │
+                         └───────────────────────────────────────┼────┘
+                                                                 │
+                                                                 ▼
+                                                          ┌─────────────┐
+                                                          │ Replica     │
+                                                          │ QLite nodes │
+                                                          └─────────────┘
+```
+
+Clients connect using the Postgres wire protocol. QLite handles the startup handshake (SSL rejection, AuthenticationOk, ParameterStatus), then enters a loop reading simple query (`Q`) messages. Each query is parsed, executed against a per-tenant SQLite file via libSQL, and the results are encoded back as Postgres wire messages (RowDescription, DataRow, CommandComplete). The database name in the connection string determines which `.db` file is opened — connecting as `myapp` reads and writes `myapp.db`.
+
+## Read Replicas
+
+QLite can forward queries to replica QLite instances for read scaling. Replicas are other QLite processes (potentially on different machines) that the primary connects to using the same Postgres wire protocol internally.
+
+### How it works
+
+- **Writes** (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, etc.) execute on the primary first, then get forwarded asynchronously to all replicas. The client gets a response as soon as the primary completes — it does not wait for replicas.
+- **Reads** (`SELECT`, `PRAGMA`, `EXPLAIN`) outside a transaction are routed to a replica instead of the primary. The response is proxied back to the client directly.
+- **Transactions** — any query inside a `BEGIN`/`COMMIT` block runs on the primary, even if it's a `SELECT`.
+
+### Setup
+
+Start a replica QLite instance:
+
+```bash
+# Replica on port 5434
+./qlite -port 5434
+```
+
+Start the primary with the replica address:
+
+```bash
+# Primary on port 5433, forwarding to replica on 5434
+./qlite -port 5433 -replicas "localhost:5434"
+
+# Multiple replicas
+./qlite -port 5433 -replicas "localhost:5434,localhost:5435"
+```
+
+Clients connect to the primary as usual. Replica routing is transparent:
+
+```bash
+psql "postgres://postgres@localhost:5433/mydb"
+```
+
+### Replica limitations
+
+- Replication is **asynchronous** — replicas may lag behind the primary
+- Read routing always uses the **first replica** in the list (no load balancing yet)
+- Replica connections are cached per database per URL, but there is no health checking or automatic reconnection
+- If a replica is down, read queries will fail rather than falling back to the primary
 
 ## Configuration
 
@@ -71,4 +173,25 @@ psql> BRANCH myapp TO myapp_copy;
 
 ## Supported Commands
 
-`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`, `BEGIN`, `COMMIT`, `ROLLBACK`, `BRANCH`
+`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`, `BEGIN`, `COMMIT`, `ROLLBACK`, `BRANCH`, `SET`, `PRAGMA`, `EXPLAIN`
+
+`SET` is accepted but treated as a no-op (returns success without executing). `PRAGMA` and `EXPLAIN` are routed as read queries.
+
+## Current Limitations
+
+QLite is early-stage. The following are **not yet supported**:
+
+| Limitation | Details |
+|---|---|
+| **Extended query protocol** | No Parse/Bind/Execute messages. Only the simple query (`Q`) protocol is handled. Clients that default to extended protocol (like pgx) must be configured for simple mode. |
+| **Authentication** | All connections are accepted regardless of credentials. User and password fields are ignored. |
+| **SSL/TLS** | SSL requests are always rejected. All connections are unencrypted. |
+| **Prepared statements** | Not supported (requires extended query protocol). |
+| **Parameterized queries** | Not supported (requires extended query protocol). |
+| **Data types** | All columns are reported as `text` (OID 25) regardless of actual SQLite type. Values are cast to strings. |
+| **COPY protocol** | Bulk loading via `COPY` is not supported. |
+| **NOTIFY/LISTEN** | Async notification channels are not supported. |
+| **Cursors** | No cursor-based result fetching. |
+| **Query cancellation** | Cancel requests are not handled. |
+| **Graceful shutdown** | No connection draining on server stop. |
+| **Multiple result sets** | Only one statement per query message is executed. |
