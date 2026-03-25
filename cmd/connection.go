@@ -88,6 +88,138 @@ func SendParameterStatus(conn net.Conn, name, value string) error {
 	return err
 }
 
+func handleReadQuery(conn net.Conn, dbName string, statement string) error {
+	randomReplicaURL := replicaUrls[0]
+	repConn, err := GetOrCreateReplicaConn(dbName, randomReplicaURL)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	err = sendQuery(repConn.Conn, statement)
+
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	for {
+
+		// read one byte for the type
+		msgType := make([]byte, 1)
+		if _, err := io.ReadFull(repConn.Conn, msgType); err != nil {
+			log.Println(err)
+			return err
+		}
+
+		// Read 4 bytes: message length
+		lenBuf := make([]byte, 4)
+		if _, err := io.ReadFull(repConn.Conn, lenBuf); err != nil {
+			log.Println(err)
+			return err
+		}
+
+		msgLength := binary.BigEndian.Uint32(lenBuf)
+
+		msgBuf := make([]byte, msgLength-4)
+		if _, err := io.ReadFull(repConn.Conn, msgBuf); err != nil {
+			log.Println(err)
+			return err
+		}
+
+		_, err = conn.Write([]byte(msgType))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		_, err = conn.Write([]byte(lenBuf))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+
+		_, err = conn.Write([]byte(msgBuf))
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+		if msgType[0] == 'C' {
+			return nil
+		}
+	}
+}
+
+func handleWriteQuery(conn net.Conn, dbName string, statement string, db *sql.DB) error {
+	columns, rows, rowsAffected, err := HandleExecute(db, statement)
+	if err != nil {
+		HandleError(conn, err)
+		return err
+	}
+	if columns != nil {
+		SendRowDescription(conn, columns)
+
+		for _, row := range rows {
+			SendDataRow(conn, row)
+		}
+		SendCommandComplete(conn, statement, rowsAffected)
+
+	} else {
+		SendCommandComplete(conn, statement, rowsAffected)
+
+	}
+	for _, replicaUrl := range replicaUrls {
+		go func(url string) {
+			replicaConn, err := GetOrCreateReplicaConn(dbName, url)
+			if err != nil {
+				log.Println(err)
+				delete(connections[dbName], url)
+				return
+			}
+
+			err = sendQuery(replicaConn.Conn, statement)
+			if err != nil {
+				log.Println(err)
+				delete(connections[dbName], url)
+				return
+			}
+
+			for {
+				msgType := make([]byte, 1)
+				if _, err := io.ReadFull(replicaConn.Conn, msgType); err != nil {
+					log.Println(err)
+					return
+				}
+
+				lenBuf := make([]byte, 4)
+
+				if _, err := io.ReadFull(replicaConn.Conn, lenBuf); err != nil {
+					log.Println(err)
+					return
+				}
+
+				msgLen := binary.BigEndian.Uint32(lenBuf)
+
+				body := make([]byte, msgLen-4)
+				if _, err := io.ReadFull(replicaConn.Conn, body); err != nil {
+					log.Println(err)
+					return
+				}
+
+				switch msgType[0] {
+				case 'C':
+					return
+				case 'E':
+					log.Println("Replica returned error")
+					return
+				}
+
+			}
+
+		}(replicaUrl)
+	}
+	return nil
+}
+
 func handleConnection(conn net.Conn) {
 	isInTransaction := false
 
@@ -116,136 +248,14 @@ func handleConnection(conn net.Conn) {
 		isRead := IsReadQuery(statement) && !isInTransaction && len(replicaUrls) > 0
 
 		if isRead {
-
-			randomReplicaURL := replicaUrls[0]
-			repConn, err := GetOrCreateReplicaConn(dbName, randomReplicaURL)
-			if err != nil {
-				log.Println(err)
+			if err := handleReadQuery(conn, dbName, statement); err != nil {
 				break
 			}
-			err = sendQuery(repConn.Conn, statement)
-
-			if err != nil {
-				log.Println(err)
-				break
-			}
-
-			for {
-
-				// read one byte for the type
-				msgType := make([]byte, 1)
-				if _, err := io.ReadFull(repConn.Conn, msgType); err != nil {
-					log.Println(err)
-					break
-				}
-
-				// Read 4 bytes: message length
-				lenBuf := make([]byte, 4)
-				if _, err := io.ReadFull(repConn.Conn, lenBuf); err != nil {
-					log.Println(err)
-					break
-				}
-
-				msgLength := binary.BigEndian.Uint32(lenBuf)
-
-				msgBuf := make([]byte, msgLength-4)
-				if _, err := io.ReadFull(repConn.Conn, msgBuf); err != nil {
-					log.Println(err)
-					break
-				}
-
-				_, err = conn.Write([]byte(msgType))
-				if err != nil {
-					log.Println(err)
-					break
-				}
-
-				_, err = conn.Write([]byte(lenBuf))
-				if err != nil {
-					log.Println(err)
-					break
-				}
-
-				_, err = conn.Write([]byte(msgBuf))
-				if err != nil {
-					log.Println(err)
-					break
-				}
-				if msgType[0] == 'C' {
-
-					break
-				}
-			}
-
 		} else {
-			columns, rows, rowsAffected, err := HandleExecute(db, statement)
-			if err != nil {
-				HandleError(conn, err)
-				continue
+
+			if err := handleWriteQuery(conn, dbName, statement, db); err != nil {
+				break
 			}
-			if columns != nil {
-				SendRowDescription(conn, columns)
-
-				for _, row := range rows {
-					SendDataRow(conn, row)
-				}
-				SendCommandComplete(conn, statement, rowsAffected)
-
-			} else {
-				SendCommandComplete(conn, statement, rowsAffected)
-
-			}
-			for _, replicaUrl := range replicaUrls {
-				go func(url string) {
-					replicaConn, err := GetOrCreateReplicaConn(dbName, url)
-					if err != nil {
-						log.Println(err)
-						delete(connections[dbName], url)
-						return
-					}
-
-					err = sendQuery(replicaConn.Conn, statement)
-					if err != nil {
-						log.Println(err)
-						delete(connections[dbName], url)
-						return
-					}
-
-					for {
-						msgType := make([]byte, 1)
-						if _, err := io.ReadFull(replicaConn.Conn, msgType); err != nil {
-							log.Println(err)
-							return
-						}
-
-						lenBuf := make([]byte, 4)
-
-						if _, err := io.ReadFull(replicaConn.Conn, lenBuf); err != nil {
-							log.Println(err)
-							return
-						}
-
-						msgLen := binary.BigEndian.Uint32(lenBuf)
-
-						body := make([]byte, msgLen-4)
-						if _, err := io.ReadFull(replicaConn.Conn, body); err != nil {
-							log.Println(err)
-							return
-						}
-
-						switch msgType[0] {
-						case 'C':
-							return
-						case 'E':
-							log.Println("Replica returned error")
-							return
-						}
-
-					}
-
-				}(replicaUrl)
-			}
-
 		}
 
 	}
