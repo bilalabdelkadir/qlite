@@ -44,6 +44,8 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 	command := ExtractCommand(statement)
 
 	switch command {
+	case "SET":
+		return nil, nil, 0, nil
 	case "BRANCH":
 		parts := strings.Fields(statement)
 		if len(parts) < 4 || strings.ToUpper(parts[2]) != "TO" {

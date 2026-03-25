@@ -41,46 +41,56 @@ func HandleSslRequest(conn net.Conn) []byte {
 }
 
 func HandleStartup(conn net.Conn, length []byte) (*sql.DB, string, error) {
-
 	bodyLength := binary.BigEndian.Uint32(length)
-
 	bodyBuffer := make([]byte, bodyLength-8)
-
 	io.ReadFull(conn, bodyBuffer)
-
 	bodyStr := string(bodyBuffer)
 
 	parts := strings.Split(bodyStr, "\x00")
 	parts = parts[:len(parts)-1]
 
 	payload := make(map[string]string)
-
-	for i := 0; i < len(parts)-1; i = i + 2 {
+	for i := 0; i < len(parts)-1; i += 2 {
 		payload[parts[i]] = parts[i+1]
-
 	}
 
+	// Send AuthenticationOk
 	conn.Write([]byte("R"))
 	lengthBuffer := make([]byte, 4)
 	binary.BigEndian.PutUint32(lengthBuffer, 8)
-
 	conn.Write(lengthBuffer)
 
 	authBuffer := make([]byte, 4)
-
 	binary.BigEndian.PutUint32(authBuffer, 0)
-
 	conn.Write(authBuffer)
+
+	// Send ParameterStatus messages
+	SendParameterStatus(conn, "standard_conforming_strings", "on")
+	SendParameterStatus(conn, "client_encoding", "UTF8")
+	SendParameterStatus(conn, "server_version", "16.0")
+	SendParameterStatus(conn, "integer_datetimes", "on")
 
 	db, err := HandleTenantDb(payload["database"])
 	if err != nil {
 		return nil, "", err
-
 	}
 	return db, payload["database"], nil
-
 }
 
+func SendParameterStatus(conn net.Conn, name, value string) error {
+
+	payload := []byte(name + "\x00" + value + "\x00")
+	msgLen := int32(4 + len(payload))
+	buf := make([]byte, 1+4+len(payload))
+	buf[0] = 'S'
+
+	binary.BigEndian.PutUint32(buf[1:5], uint32(msgLen))
+
+	copy(buf[5:], payload)
+
+	_, err := conn.Write(buf)
+	return err
+}
 func handleConnection(conn net.Conn) {
 	isInTransaction := false
 
