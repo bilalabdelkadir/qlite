@@ -1,41 +1,49 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
-	"fmt"
 	"net"
+	"strconv"
 )
 
 func HandleError(conn net.Conn, err error) {
-	conn.Write([]byte("E"))
-	severity := "ERROR\x00"
-	message := err.Error() + "\x00"
+	var buf bytes.Buffer
+	var payload bytes.Buffer
 
-	endMarker := []byte{0}
+	severity := "ERROR"
+	message := err.Error()
 
-	payloadLength := len(severity) + 1 + len(message) + 1 + len(endMarker)
-	lengthBuffer := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuffer, uint32(payloadLength+4))
+	// Write fields
+	payload.WriteByte('S')
+	payload.WriteString(severity)
+	payload.WriteByte(0)
 
-	conn.Write(lengthBuffer)
+	payload.WriteByte('M')
+	payload.WriteString(message)
+	payload.WriteByte(0)
 
-	conn.Write([]byte("S"))
-	conn.Write([]byte(severity))
-	conn.Write([]byte("M"))
-	conn.Write([]byte(message))
-	conn.Write(endMarker)
+	// End marker
+	payload.WriteByte(0)
 
+	// Write message type
+	buf.WriteByte('E')
+
+	// Write length (payload + length field itself)
+	length := uint32(payload.Len() + 4)
+	binary.Write(&buf, binary.BigEndian, length)
+
+	// Write payload
+	buf.Write(payload.Bytes())
+
+	// Send everything
+	conn.Write(buf.Bytes())
 }
 
 func ReadyForQuery(conn net.Conn) {
-
 	conn.Write([]byte("Z"))
-	lengthBuffer := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuffer, 5)
-	conn.Write(lengthBuffer)
-
+	binary.Write(conn, binary.BigEndian, uint32(5))
 	conn.Write([]byte("I"))
-
 }
 
 func SendDataRow(conn net.Conn, values []string) {
@@ -46,47 +54,42 @@ func SendDataRow(conn net.Conn, values []string) {
 		payloadLength += 4 + len(val)
 	}
 
-	lengthBuffer := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuffer, uint32(payloadLength+4))
-	conn.Write(lengthBuffer)
-
-	columnCount := make([]byte, 2)
-	binary.BigEndian.PutUint16(columnCount, uint16(len(values)))
-	conn.Write(columnCount)
+	binary.Write(conn, binary.BigEndian, uint32(payloadLength+4))
+	binary.Write(conn, binary.BigEndian, uint16(len(values)))
 
 	for _, val := range values {
-		buf4 := make([]byte, 4)
-		binary.BigEndian.PutUint32(buf4, uint32(len(val)))
-		conn.Write(buf4)
-
+		binary.Write(conn, binary.BigEndian, uint32(len(val)))
 		conn.Write([]byte(val))
 	}
 }
 func SendCommandComplete(conn net.Conn, statement string, rowsAffected int) {
+	var cmdBuf bytes.Buffer
 	command := ExtractCommand(statement)
 
 	conn.Write([]byte("C"))
 
-	var cmdToSend string
-
 	switch command {
 	case "INSERT":
-		cmdToSend = fmt.Sprintf("INSERT 0 %d\x00", rowsAffected)
+		cmdBuf.WriteString("INSERT 0 ")
+		cmdBuf.WriteString(strconv.Itoa(rowsAffected))
 	case "UPDATE":
-		cmdToSend = fmt.Sprintf("UPDATE %d\x00", rowsAffected)
+		cmdBuf.WriteString("UPDATE ")
+		cmdBuf.WriteString(strconv.Itoa(rowsAffected))
 	case "DELETE":
-		cmdToSend = fmt.Sprintf("DELETE %d\x00", rowsAffected)
+		cmdBuf.WriteString("DELETE ")
+		cmdBuf.WriteString(strconv.Itoa(rowsAffected))
 	case "SELECT":
-		cmdToSend = fmt.Sprintf("SELECT %d\x00", rowsAffected)
+		cmdBuf.WriteString("SELECT ")
+		cmdBuf.WriteString(strconv.Itoa(rowsAffected))
 	default:
-		cmdToSend = fmt.Sprintf("%s\x00", command)
+		cmdBuf.WriteString(command)
 	}
 
-	lengthBuffer := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuffer, uint32(len(cmdToSend)+4)) // length includes itself
-	conn.Write(lengthBuffer)
+	cmdBuf.WriteByte(0)
 
-	conn.Write([]byte(cmdToSend))
+	binary.Write(conn, binary.BigEndian, uint32(cmdBuf.Len()+4))
+
+	conn.Write(cmdBuf.Bytes())
 }
 
 func SendRowDescription(conn net.Conn, columnNames []string) {
@@ -99,36 +102,19 @@ func SendRowDescription(conn net.Conn, columnNames []string) {
 		payloadLength += len(columnName) + 1 + 4 + 2 + 4 + 2 + 4 + 2
 	}
 
-	lengthBuffer := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuffer, uint32(payloadLength+2+4))
-	conn.Write(lengthBuffer)
-
-	columnCount := make([]byte, 2)
-	binary.BigEndian.PutUint16(columnCount, uint16(len(columnNames)))
-	conn.Write(columnCount)
+	binary.Write(conn, binary.BigEndian, uint32(payloadLength+2+4))
+	binary.Write(conn, binary.BigEndian, uint16(len(columnNames)))
 
 	for _, columnName := range columnNames {
-		conn.Write([]byte(columnName + "\x00"))
+		conn.Write([]byte(columnName))
+		conn.Write([]byte{0})
 
-		buf4 := make([]byte, 4)
-		binary.BigEndian.PutUint32(buf4, 0)
-		conn.Write(buf4)
-
-		buf2 := make([]byte, 2)
-		binary.BigEndian.PutUint16(buf2, 0)
-		conn.Write(buf2)
-
-		binary.BigEndian.PutUint32(buf4, 25)
-		conn.Write(buf4)
-
-		binary.BigEndian.PutUint16(buf2, uint16(0xFFFF))
-		conn.Write(buf2)
-
-		binary.BigEndian.PutUint32(buf4, 0xFFFFFFFF)
-		conn.Write(buf4)
-
-		binary.BigEndian.PutUint16(buf2, 0)
-		conn.Write(buf2)
+		binary.Write(conn, binary.BigEndian, uint32(0))
+		binary.Write(conn, binary.BigEndian, uint16(0))
+		binary.Write(conn, binary.BigEndian, uint32(25))
+		binary.Write(conn, binary.BigEndian, uint16(0xFFFF))
+		binary.Write(conn, binary.BigEndian, uint32(0xFFFFFFFF))
+		binary.Write(conn, binary.BigEndian, uint16(0))
 	}
 
 }

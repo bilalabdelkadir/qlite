@@ -56,13 +56,8 @@ func HandleStartup(conn net.Conn, length []byte) (*sql.DB, string, error) {
 
 	// Send AuthenticationOk
 	conn.Write([]byte("R"))
-	lengthBuffer := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuffer, 8)
-	conn.Write(lengthBuffer)
-
-	authBuffer := make([]byte, 4)
-	binary.BigEndian.PutUint32(authBuffer, 0)
-	conn.Write(authBuffer)
+	binary.Write(conn, binary.BigEndian, uint32(8))
+	binary.Write(conn, binary.BigEndian, uint32(0))
 
 	// Send ParameterStatus messages
 	SendParameterStatus(conn, "standard_conforming_strings", "on")
@@ -78,19 +73,21 @@ func HandleStartup(conn net.Conn, length []byte) (*sql.DB, string, error) {
 }
 
 func SendParameterStatus(conn net.Conn, name, value string) error {
+	var payload bytes.Buffer
+	payload.WriteString(name)
+	payload.WriteByte(0)
+	payload.WriteString(value)
+	payload.WriteByte(0)
 
-	payload := []byte(name + "\x00" + value + "\x00")
-	msgLen := int32(4 + len(payload))
-	buf := make([]byte, 1+4+len(payload))
-	buf[0] = 'S'
+	var msg bytes.Buffer
+	msg.WriteByte('S')
+	binary.Write(&msg, binary.BigEndian, uint32(payload.Len()+4))
+	msg.Write(payload.Bytes())
 
-	binary.BigEndian.PutUint32(buf[1:5], uint32(msgLen))
-
-	copy(buf[5:], payload)
-
-	_, err := conn.Write(buf)
+	_, err := conn.Write(msg.Bytes())
 	return err
 }
+
 func handleConnection(conn net.Conn) {
 	isInTransaction := false
 
@@ -267,13 +264,8 @@ func sendQuery(conn net.Conn, statement string) error {
 		return err
 	}
 
-	totalLen := uint32(4 + statementToSend.Len())
+	err = binary.Write(conn, binary.BigEndian, uint32(4+statementToSend.Len()))
 
-	lenBuf := make([]byte, 4)
-
-	binary.BigEndian.PutUint32(lenBuf, uint32(totalLen))
-
-	_, err = conn.Write(lenBuf)
 	if err != nil {
 		log.Println(err)
 		return err
