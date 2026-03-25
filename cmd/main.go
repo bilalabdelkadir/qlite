@@ -6,31 +6,33 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/tursodatabase/go-libsql"
 )
 
-var ReplicaUrls []string
+var replicaUrls []string
 
-type ReplicaConn struct {
+type replicaConn struct {
 	Conn     net.Conn
 	Region   string
 	LastUsed time.Time
 }
 
 // map[dbName]map[replicaURL]*ReplicaConn
-var Connections map[string]map[string]*ReplicaConn
+var connections map[string]map[string]*replicaConn
+var connectionsMu sync.RWMutex
 
 func main() {
-	Connections = make(map[string]map[string]*ReplicaConn)
+	connections = make(map[string]map[string]*replicaConn)
 
 	port := flag.Int("port", 5433, "Port Number")
 	replicas := flag.String("replicas", "", "replica regions")
 	flag.Parse()
 	addr := fmt.Sprintf(":%d", *port)
 	if *replicas != "" {
-		ReplicaUrls = strings.Split(*replicas, ",")
+		replicaUrls = strings.Split(*replicas, ",")
 	}
 
 	listener, err := net.Listen("tcp", addr)
@@ -45,7 +47,6 @@ func main() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println(err)
 			continue
 		}
 		go handleConnection(conn)

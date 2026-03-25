@@ -45,7 +45,6 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 
 	switch command {
 	case "BRANCH":
-		fmt.Printf("raw statement bytes: %q\n", statement)
 		parts := strings.Fields(statement)
 		if len(parts) < 4 || strings.ToUpper(parts[2]) != "TO" {
 			return nil, nil, 0, fmt.Errorf("invalid BRANCH statement: expected format 'BRANCH <source> TO <target>;'")
@@ -76,23 +75,29 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 		return nil, nil, 1, nil
 
 	case "SELECT":
-		r, e := db.Query(statement)
-		if e != nil {
-			return nil, nil, 0, e
+		rows, err := db.Query(statement)
+		if err != nil {
+			return nil, nil, 0, err
 		}
-		defer r.Close()
+		defer rows.Close()
 
-		cols, _ := r.Columns()
+		cols, err := rows.Columns()
+		if err != nil {
+			return nil, nil, 0, err
+		}
 		var results [][]string
 
-		for r.Next() {
+		for rows.Next() {
 			values := make([]interface{}, len(cols))
 			valuePtrs := make([]interface{}, len(cols))
 			for i := range values {
 				valuePtrs[i] = &values[i]
 			}
 
-			r.Scan(valuePtrs...)
+			err = rows.Scan(valuePtrs...)
+			if err != nil {
+				return nil, nil, 0, err
+			}
 			row := make([]string, len(cols))
 			for i, val := range values {
 				if val != nil {
@@ -107,12 +112,12 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 		return cols, results, len(results), nil
 
 	case "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER":
-		res, e := db.Exec(statement)
-		if e != nil {
-			return nil, nil, 0, e
+		res, err := db.Exec(statement)
+		if err != nil {
+			return nil, nil, 0, err
 		}
-		ra, _ := res.RowsAffected()
-		return nil, nil, int(ra), nil
+		rowsAffected, _ := res.RowsAffected()
+		return nil, nil, int(rowsAffected), nil
 
 	default:
 		return nil, nil, 0, fmt.Errorf("unsupported SQL command: %s", command)
@@ -127,7 +132,7 @@ func HandleStatement(conn net.Conn) (string, error) {
 	msgType := string(typeBuffer)
 
 	if msgType != "Q" {
-		HandleError(conn, errors.New("Wrong type."))
+		HandleError(conn, errors.New("unsupported message type"))
 	}
 
 	statementLengthBuffer := make([]byte, 4)

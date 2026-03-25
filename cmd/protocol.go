@@ -78,8 +78,6 @@ func SendCommandComplete(conn net.Conn, statement string, rowsAffected int) {
 		cmdToSend = fmt.Sprintf("DELETE %d\x00", rowsAffected)
 	case "SELECT":
 		cmdToSend = fmt.Sprintf("SELECT %d\x00", rowsAffected)
-	case "CREATE", "DROP", "ALTER":
-		cmdToSend = fmt.Sprintf("%s\x00", command)
 	default:
 		cmdToSend = fmt.Sprintf("%s\x00", command)
 	}
