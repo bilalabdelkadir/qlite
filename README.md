@@ -5,7 +5,7 @@ A PostgreSQL wire protocol proxy that runs SQLite databases underneath. Connect 
 ## Features
 
 - **PostgreSQL wire protocol** — speaks the Postgres frontend/backend protocol, so standard clients just work
-- **Multi-tenant** — the database name in the connection string maps to a separate SQLite file (`<name>.db`), each with WAL mode and busy timeout configured
+- **Multi-tenant** — the database name in the connection string maps to a separate SQLite file (`<name>.db`), each with a busy timeout configured
 - **`BRANCH` command** — copy a database to a new name: `BRANCH source TO target;`
 - **Transaction awareness** — tracks `BEGIN`/`COMMIT`/`ROLLBACK` to route queries correctly
 - **Read replica infrastructure** — optional `--replicas` flag to specify replica regions (read routing in progress)
@@ -160,7 +160,7 @@ psql "postgres://postgres@localhost:5433/mydb"
 ### Replica limitations
 
 - Replication is **asynchronous** — replicas may lag behind the primary
-- Read routing always uses the **first replica** in the list (no load balancing yet)
+- Read routing uses **round-robin** across the replica list (no weighted or latency-based balancing)
 - Replica connections are cached per database per URL, but there is no health checking or automatic reconnection
 - If a replica is down, read queries will fail rather than falling back to the primary
 
@@ -175,7 +175,7 @@ psql "postgres://postgres@localhost:5433/mydb"
 
 `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`, `BEGIN`, `COMMIT`, `ROLLBACK`, `BRANCH`, `SET`, `PRAGMA`, `EXPLAIN`
 
-`SET` is accepted but treated as a no-op (returns success without executing). `PRAGMA` and `EXPLAIN` are routed as read queries.
+`SET` is accepted but treated as a no-op (returns success without executing). `PRAGMA` and `EXPLAIN` are classified as read queries — when replicas are configured, they are routed to a replica. **Without replicas, `PRAGMA` and `EXPLAIN` are not supported** (they are not handled by the local executor).
 
 ## Current Limitations
 
