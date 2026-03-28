@@ -1,5 +1,6 @@
 *.db
 .vscode
 /internal-docs
+/docs/superpowers
 /qlite
 /replica_data
