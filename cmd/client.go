@@ -134,13 +134,16 @@ func handleReadQuery(conn net.Conn, dbName string, statement string) error {
 	repConn, err := GetOrCreateReplicaConn(dbName, randomReplicaURL)
 	if err != nil {
 		log.Println(err)
-		return err
+		delete(connections[dbName], randomReplicaURL)
+		return nil
 	}
 	err = sendQuery(repConn.Conn, statement)
 
 	if err != nil {
 		log.Println(err)
-		return err
+		delete(connections[dbName], randomReplicaURL)
+		HandleError(conn, err)
+		return nil
 	}
 
 	for {
@@ -194,7 +197,7 @@ func handleWriteQuery(conn net.Conn, dbName string, statement string, db *sql.DB
 	columns, rows, rowsAffected, err := HandleExecute(db, statement)
 	if err != nil {
 		HandleError(conn, err)
-		return err
+		return nil
 	}
 	if columns != nil {
 		SendRowDescription(conn, columns)
