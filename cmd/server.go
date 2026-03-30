@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -147,6 +148,34 @@ func ReadStartupResponse(conn net.Conn, dbName string) error {
 	}
 
 	return nil
+}
+
+func GetOrCreateDb(dbName string) (*sql.DB, error) {
+	clientsMu.RLock()
+	db := clients[dbName]
+	log.Printf("GetOrCreateDb: %s (exists: %v)", dbName, clients[dbName] != nil)
+
+	clientsMu.RUnlock()
+
+	if db != nil {
+		return db, nil
+	}
+
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+
+	db = clients[dbName]
+	if db != nil {
+		return db, nil
+	}
+
+	newDB, err := HandleTenantDb(dbName)
+	if err != nil {
+		return nil, err
+	}
+
+	clients[dbName] = newDB
+	return newDB, nil
 }
 
 func GetOrCreateReplicaConn(dbName string, replicaURL string) (*replicaConn, error) {

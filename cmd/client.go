@@ -60,7 +60,7 @@ func HandleStartup(conn net.Conn, length []byte) (*sql.DB, string, error) {
 	SendParameterStatus(conn, "server_version", "16.0")
 	SendParameterStatus(conn, "integer_datetimes", "on")
 
-	db, err := HandleTenantDb(payload["database"])
+	db, err := GetOrCreateDb(payload["database"])
 	if err != nil {
 		return nil, "", err
 	}
@@ -92,7 +92,6 @@ func handleConnection(conn net.Conn) {
 		conn.Close()
 		return
 	}
-	defer db.Close()
 
 	for {
 		ReadyForQuery(conn, isInTransaction)
