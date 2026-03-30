@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -131,10 +130,11 @@ func HandleStatement(conn net.Conn) (string, error) {
 
 	io.ReadFull(conn, typeBuffer)
 
-	msgType := string(typeBuffer)
+	msgType := typeBuffer[0]
 
-	if msgType != "Q" {
-		HandleError(conn, errors.New("unsupported message type"))
+	if msgType != MsgQuery {
+		HandleError(conn, fmt.Errorf("unsupported message type: %c", msgType))
+		return "", fmt.Errorf("unsupported message type: %c", msgType)
 	}
 
 	statementLengthBuffer := make([]byte, 4)

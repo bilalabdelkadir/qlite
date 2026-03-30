@@ -10,9 +10,70 @@ import (
 	"time"
 )
 
+// PostgreSQL wire protocol message types (frontend -> backend).
 const (
-	sslRequestCode  = 80877103
-	protocolVersion = 196608
+	// MsgQuery is the Simple Query message ('Q').
+	MsgQuery byte = 'Q'
+	// MsgTerminate is sent by the client to close the connection ('X').
+	MsgTerminate byte = 'X'
+)
+
+// PostgreSQL wire protocol message types (backend -> frontend).
+const (
+	// MsgAuthentication is the authentication response ('R').
+	MsgAuthentication byte = 'R'
+	// MsgParameterStatus sends a runtime parameter value ('S').
+	MsgParameterStatus byte = 'S'
+	// MsgRowDescription describes the columns in a query result ('T').
+	MsgRowDescription byte = 'T'
+	// MsgDataRow carries a single row of query results ('D').
+	MsgDataRow byte = 'D'
+	// MsgCommandComplete signals a command finished successfully ('C').
+	MsgCommandComplete byte = 'C'
+	// MsgErrorResponse reports an error to the client ('E').
+	MsgErrorResponse byte = 'E'
+	// MsgReadyForQuery tells the client the backend is ready ('Z').
+	MsgReadyForQuery byte = 'Z'
+)
+
+// Error response field identifiers.
+const (
+	// FieldSeverity identifies the severity field in an error message.
+	FieldSeverity byte = 'S'
+	// FieldMessage identifies the human-readable message field.
+	FieldMessage byte = 'M'
+)
+
+// Transaction status indicators sent in ReadyForQuery.
+const (
+	// TxStatusIdle means no transaction is active.
+	TxStatusIdle byte = 'I'
+	// TxStatusInTransaction means a transaction is in progress.
+	TxStatusInTransaction byte = 'T'
+)
+
+// PostgreSQL type OIDs and format codes.
+const (
+	// OIDText is the PostgreSQL OID for the TEXT type.
+	OIDText uint32 = 25
+	// UnknownTableOID means the column is not tied to a specific table.
+	UnknownTableOID uint32 = 0
+	// UnknownColumnIndex means the column index is not available.
+	UnknownColumnIndex uint16 = 0
+	// UnknownTypeModifier means no type-specific modifier is applied (-1 as uint32).
+	UnknownTypeModifier uint32 = 0xFFFFFFFF
+	// VariableLengthSize indicates the type has no fixed size (-1 as int16 / 0xFFFF as uint16).
+	VariableLengthSize uint16 = 0xFFFF
+	// FormatText indicates text format for result columns.
+	FormatText uint16 = 0
+)
+
+// Startup and SSL negotiation codes.
+const (
+	// SSLRequestCode is the magic number clients send to request SSL.
+	SSLRequestCode uint32 = 80877103
+	// ProtocolVersion3 is the PostgreSQL 3.0 protocol version number.
+	ProtocolVersion3 uint32 = 196608
 )
 
 func sendQuery(conn net.Conn, statement string) error {
@@ -21,7 +82,7 @@ func sendQuery(conn net.Conn, statement string) error {
 	statementToSend.WriteString(statement)
 	statementToSend.WriteByte(0)
 
-	_, err := conn.Write([]byte("Q"))
+	_, err := conn.Write([]byte{MsgQuery})
 	if err != nil {
 		log.Println(err)
 		return err
@@ -51,7 +112,7 @@ func ReadStartupResponse(conn net.Conn, dbName string) error {
 		return err
 	}
 
-	if msgType[0] == 'E' {
+	if msgType[0] == MsgErrorResponse {
 		return fmt.Errorf("replica rejected connection for database %s", dbName)
 	}
 
@@ -138,7 +199,7 @@ func SendStartupMessage(conn net.Conn, dbName string) error {
 	if err != nil {
 		return err
 	}
-	err = binary.Write(conn, binary.BigEndian, uint32(protocolVersion))
+	err = binary.Write(conn, binary.BigEndian, ProtocolVersion3)
 	if err != nil {
 		return err
 	}

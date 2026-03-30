@@ -23,13 +23,13 @@ func HandleSslRequest(conn net.Conn) []byte {
 	protocol := binary.BigEndian.Uint32(protocolBuffer)
 
 	switch protocol {
-	case sslRequestCode:
-		conn.Write([]byte("N"))
+	case SSLRequestCode:
+		conn.Write([]byte("N")) // 'N' = SSL not supported
 		newLengthBuffer := make([]byte, 4)
 		io.ReadFull(conn, newLengthBuffer)
 		io.ReadFull(conn, make([]byte, 4))
 		return newLengthBuffer
-	case protocolVersion:
+	case ProtocolVersion3:
 		return lengthBuffer
 	default:
 		return lengthBuffer
@@ -50,10 +50,9 @@ func HandleStartup(conn net.Conn, length []byte) (*sql.DB, string, error) {
 		payload[parts[i]] = parts[i+1]
 	}
 
-	// Send AuthenticationOk
-	conn.Write([]byte("R"))
+	conn.Write([]byte{MsgAuthentication})
 	binary.Write(conn, binary.BigEndian, uint32(8))
-	binary.Write(conn, binary.BigEndian, uint32(0))
+	binary.Write(conn, binary.BigEndian, uint32(0)) // AuthenticationOk
 
 	// Send ParameterStatus messages
 	SendParameterStatus(conn, "standard_conforming_strings", "on")
@@ -76,7 +75,7 @@ func SendParameterStatus(conn net.Conn, name, value string) error {
 	payload.WriteByte(0)
 
 	var msg bytes.Buffer
-	msg.WriteByte('S')
+	msg.WriteByte(MsgParameterStatus)
 	binary.Write(&msg, binary.BigEndian, uint32(payload.Len()+4))
 	msg.Write(payload.Bytes())
 
@@ -187,7 +186,7 @@ func handleReadQuery(conn net.Conn, dbName string, statement string) error {
 			log.Println(err)
 			return err
 		}
-		if msgType[0] == 'C' {
+		if msgType[0] == MsgCommandComplete {
 			return nil
 		}
 	}
@@ -201,16 +200,14 @@ func handleWriteQuery(conn net.Conn, dbName string, statement string, db *sql.DB
 	}
 	if columns != nil {
 		SendRowDescription(conn, columns)
-
 		for _, row := range rows {
 			SendDataRow(conn, row)
 		}
 		SendCommandComplete(conn, statement, rowsAffected)
-
 	} else {
 		SendCommandComplete(conn, statement, rowsAffected)
-
 	}
+
 	for _, replicaUrl := range replicaUrls {
 		go func(url string) {
 			replicaConn, err := GetOrCreateReplicaConn(dbName, url)
@@ -250,9 +247,9 @@ func handleWriteQuery(conn net.Conn, dbName string, statement string, db *sql.DB
 				}
 
 				switch msgType[0] {
-				case 'C':
+				case MsgCommandComplete:
 					return
-				case 'E':
+				case MsgErrorResponse:
 					log.Println("Replica returned error")
 					return
 				}
