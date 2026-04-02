@@ -95,31 +95,7 @@ cur.execute("SELECT * FROM users")
 
 ## Architecture
 
-```
-                         +---------------------------------------------+
-                         |              QLite Proxy                     |
-                         |                                              |
-psql ------+             |  +-----------+    +-------------------+     |
-           |  Postgres   |  | Protocol  |    |    Executor       |     |    +--------------+
-pgx -------+- wire ------+->| Handler   +--->|                   +-----+--->| myapp.db     |
-           |  protocol   |  | (Q msgs)  |    | SELECT,INSERT,... |     |    | (SQLite/WAL) |
-node-pg ---+             |  +-----------+    +-------------------+     |    +--------------+
-                         |                                              |
-                         |        | writes replicated async             |
-                         |        v                                     |
-                         |  +---------------+    Postgres wire          |
-                         |  | Replica Conn  +------------------+       |
-                         |  | Pool          |                  |       |
-                         |  +---------------+                  |       |
-                         |                                     |       |
-                         +-------------------------------------+-------+
-                                                               |
-                                                               v
-                                                        +-------------+
-                                                        | Replica     |
-                                                        | QLite nodes |
-                                                        +-------------+
-```
+![QLite Architecture](docs/architecture.svg)
 
 ### Query lifecycle
 

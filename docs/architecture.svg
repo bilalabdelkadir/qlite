@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 580" font-family="Inter, -apple-system, system-ui, sans-serif">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-auto">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#6B7280"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-auto">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#3B82F6"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="10" markerHeight="7" orient="auto-start-auto">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#F59E0B"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="580" rx="12" fill="#FAFAFA"/>
+
+  <!-- Title -->
+  <text x="460" y="36" text-anchor="middle" font-size="18" font-weight="700" fill="#111827">QLite Architecture</text>
+
+  <!-- === CLIENTS === -->
+  <rect x="30" y="70" width="130" height="160" rx="10" fill="white" stroke="#E5E7EB" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="95" y="96" text-anchor="middle" font-size="11" font-weight="600" fill="#6B7280" letter-spacing="0.5">CLIENTS</text>
+  <line x1="50" y1="106" x2="140" y2="106" stroke="#E5E7EB" stroke-width="1"/>
+
+  <rect x="48" y="118" width="94" height="28" rx="6" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+  <text x="95" y="137" text-anchor="middle" font-size="12" fill="#1E40AF">psql</text>
+
+  <rect x="48" y="154" width="94" height="28" rx="6" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+  <text x="95" y="173" text-anchor="middle" font-size="12" fill="#1E40AF">pgx (Go)</text>
+
+  <rect x="48" y="190" width="94" height="28" rx="6" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+  <text x="95" y="209" text-anchor="middle" font-size="12" fill="#1E40AF">node-postgres</text>
+
+  <!-- Arrow: Clients -> Proxy -->
+  <line x1="160" y1="150" x2="228" y2="150" stroke="#3B82F6" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <text x="194" y="140" text-anchor="middle" font-size="9" fill="#3B82F6" font-weight="500">PG Wire</text>
+  <text x="194" y="150" text-anchor="middle" font-size="9" fill="#3B82F6" font-weight="500">Protocol</text>
+
+  <!-- === QLITE PROXY === -->
+  <rect x="240" y="58" width="400" height="310" rx="12" fill="white" stroke="#D1D5DB" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="240" y="58" width="400" height="34" rx="12" fill="#F3F4F6"/>
+  <rect x="240" y="80" width="400" height="12" fill="#F3F4F6"/>
+  <text x="440" y="81" text-anchor="middle" font-size="13" font-weight="700" fill="#374151">QLite Proxy Server</text>
+
+  <!-- Protocol Handler -->
+  <rect x="262" y="108" width="160" height="52" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1"/>
+  <text x="342" y="130" text-anchor="middle" font-size="11" font-weight="600" fill="#1E40AF">Protocol Handler</text>
+  <text x="342" y="146" text-anchor="middle" font-size="10" fill="#3B82F6">Simple Query (Q msgs)</text>
+
+  <!-- Buffered Writer -->
+  <rect x="262" y="172" width="160" height="36" rx="8" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1"/>
+  <text x="342" y="195" text-anchor="middle" font-size="11" font-weight="600" fill="#166534">bufio.Writer</text>
+
+  <!-- Executor -->
+  <rect x="262" y="222" width="160" height="52" rx="8" fill="#DBEAFE" stroke="#93C5FD" stroke-width="1"/>
+  <text x="342" y="244" text-anchor="middle" font-size="11" font-weight="600" fill="#1E40AF">Executor</text>
+  <text x="342" y="260" text-anchor="middle" font-size="10" fill="#3B82F6">Stream rows to client</text>
+
+  <!-- Tenant Manager -->
+  <rect x="462" y="108" width="160" height="52" rx="8" fill="#FEF3C7" stroke="#FCD34D" stroke-width="1"/>
+  <text x="542" y="130" text-anchor="middle" font-size="11" font-weight="600" fill="#92400E">Tenant Manager</text>
+  <text x="542" y="146" text-anchor="middle" font-size="10" fill="#B45309">db.Ping() warmup</text>
+
+  <!-- Connection Cache -->
+  <rect x="462" y="172" width="160" height="36" rx="8" fill="#FEF3C7" stroke="#FCD34D" stroke-width="1"/>
+  <text x="542" y="195" text-anchor="middle" font-size="11" font-weight="600" fill="#92400E">Connection Cache</text>
+
+  <!-- Replica Pool -->
+  <rect x="462" y="222" width="160" height="52" rx="8" fill="#FDE8E8" stroke="#FCA5A5" stroke-width="1"/>
+  <text x="542" y="244" text-anchor="middle" font-size="11" font-weight="600" fill="#991B1B">Replica Pool</text>
+  <text x="542" y="260" text-anchor="middle" font-size="10" fill="#DC2626">Round-robin routing</text>
+
+  <!-- Internal arrows -->
+  <line x1="342" y1="160" x2="342" y2="172" stroke="#6B7280" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="342" y1="208" x2="342" y2="222" stroke="#6B7280" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="422" y1="134" x2="462" y2="134" stroke="#6B7280" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="422" y1="248" x2="462" y2="248" stroke="#6B7280" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+  <!-- Query flow labels inside proxy -->
+  <rect x="270" y="290" width="120" height="24" rx="5" fill="#EFF6FF"/>
+  <text x="330" y="306" text-anchor="middle" font-size="9" fill="#3B82F6">SELECT -> replica</text>
+  <rect x="400" y="290" width="140" height="24" rx="5" fill="#FEF3C7"/>
+  <text x="470" y="306" text-anchor="middle" font-size="9" fill="#B45309">INSERT -> primary + async</text>
+
+  <!-- Transaction note -->
+  <rect x="270" y="326" width="350" height="24" rx="5" fill="#F3F4F6"/>
+  <text x="445" y="342" text-anchor="middle" font-size="9" fill="#6B7280">BEGIN/COMMIT/ROLLBACK -> all queries route to primary</text>
+
+  <!-- === SQLite DATABASES === -->
+  <rect x="700" y="70" width="190" height="200" rx="10" fill="white" stroke="#E5E7EB" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="795" y="96" text-anchor="middle" font-size="11" font-weight="600" fill="#6B7280" letter-spacing="0.5">SQLite (libSQL)</text>
+  <line x1="720" y1="106" x2="870" y2="106" stroke="#E5E7EB" stroke-width="1"/>
+
+  <!-- DB files -->
+  <rect x="718" y="118" width="154" height="32" rx="6" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1"/>
+  <text x="724" y="139" font-size="12" fill="#166534">myapp.db</text>
+  <text x="842" y="139" font-size="9" fill="#6B7280">WAL</text>
+
+  <rect x="718" y="160" width="154" height="32" rx="6" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1"/>
+  <text x="724" y="181" font-size="12" fill="#166534">analytics.db</text>
+  <text x="842" y="181" font-size="9" fill="#6B7280">WAL</text>
+
+  <rect x="718" y="202" width="154" height="32" rx="6" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1"/>
+  <text x="724" y="223" font-size="12" fill="#166534">users.db</text>
+  <text x="842" y="223" font-size="9" fill="#6B7280">WAL</text>
+
+  <!-- Arrow: Proxy -> SQLite -->
+  <line x1="640" y1="170" x2="698" y2="170" stroke="#16A34A" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="669" y="162" text-anchor="middle" font-size="9" fill="#16A34A" font-weight="500">libSQL</text>
+
+  <!-- === REPLICAS === -->
+  <rect x="700" y="340" width="190" height="100" rx="10" fill="white" stroke="#E5E7EB" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="795" y="366" text-anchor="middle" font-size="11" font-weight="600" fill="#6B7280" letter-spacing="0.5">REPLICAS</text>
+  <line x1="720" y1="376" x2="870" y2="376" stroke="#E5E7EB" stroke-width="1"/>
+
+  <rect x="718" y="388" width="154" height="18" rx="4" fill="#FDE8E8" stroke="#FCA5A5" stroke-width="1"/>
+  <text x="795" y="401" text-anchor="middle" font-size="10" fill="#991B1B">QLite node :5434</text>
+
+  <rect x="718" y="414" width="154" height="18" rx="4" fill="#FDE8E8" stroke="#FCA5A5" stroke-width="1"/>
+  <text x="795" y="427" text-anchor="middle" font-size="10" fill="#991B1B">QLite node :5435</text>
+
+  <!-- Arrow: Proxy -> Replicas -->
+  <line x1="580" y1="274" x2="580" y2="390" stroke="#F59E0B" stroke-width="2" stroke-dasharray="6 3"/>
+  <line x1="580" y1="390" x2="698" y2="390" stroke="#F59E0B" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arrow-amber)"/>
+  <text x="590" y="340" font-size="9" fill="#F59E0B" font-weight="500">async writes</text>
+
+  <!-- Arrow: Replicas read response -->
+  <line x1="718" y1="410" x2="660" y2="410" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <line x1="660" y1="410" x2="660" y2="300" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <line x1="660" y1="300" x2="640" y2="260" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="4 2" marker-end="url(#arrow-blue)"/>
+  <text x="668" y="360" font-size="9" fill="#3B82F6" font-weight="500">read</text>
+  <text x="668" y="372" font-size="9" fill="#3B82F6" font-weight="500">proxy</text>
+
+  <!-- === LEGEND === -->
+  <rect x="30" y="490" width="860" height="70" rx="10" fill="white" stroke="#E5E7EB" stroke-width="1"/>
+  <text x="50" y="514" font-size="11" font-weight="600" fill="#374151">Legend</text>
+
+  <line x1="50" y1="535" x2="90" y2="535" stroke="#3B82F6" stroke-width="2"/>
+  <text x="96" y="539" font-size="10" fill="#6B7280">PG wire protocol</text>
+
+  <line x1="230" y1="535" x2="270" y2="535" stroke="#16A34A" stroke-width="2"/>
+  <text x="276" y="539" font-size="10" fill="#6B7280">libSQL / CGo</text>
+
+  <line x1="400" y1="535" x2="440" y2="535" stroke="#F59E0B" stroke-width="2" stroke-dasharray="6 3"/>
+  <text x="446" y="539" font-size="10" fill="#6B7280">Async replication</text>
+
+  <line x1="600" y1="535" x2="640" y2="535" stroke="#3B82F6" stroke-width="1.5" stroke-dasharray="4 2"/>
+  <text x="646" y="539" font-size="10" fill="#6B7280">Read proxy response</text>
+</svg>
