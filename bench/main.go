@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 
@@ -13,13 +12,13 @@ import (
 )
 
 func main() {
-	runtime.GOMAXPROCS(1)
 
 	ctx := context.Background()
 
-	dbUrl := "postgres://postgres@localhost:5433/testss"
-	numClients := 5
-	queriesPerClient := 100
+	dbUrl := "postgres://postgres@localhost:5433/benchdb"
+	// dbUrl := "postgresql://admin:2334@localhost:5432/mini_inventory"
+	numClients := 2
+	queriesPerClient := 500
 	sqlQuery := "SELECT 1"
 
 	fmt.Printf("Running benchmark: %d clients × %d queries each = %d total queries\n",
