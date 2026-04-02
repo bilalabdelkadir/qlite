@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -22,16 +23,13 @@ type replicaConn struct {
 }
 
 // map[dbName]map[replicaURL]*ReplicaConn
-var connections map[string]map[string]*replicaConn
+var connections = make(map[string]map[string]*replicaConn)
 var connectionsMu sync.RWMutex
 
-var clients map[string]*sql.DB
+var clients = make(map[string]*sql.DB)
 var clientsMu sync.RWMutex
 
 func main() {
-	connections = make(map[string]map[string]*replicaConn)
-	clients = make(map[string]*sql.DB)
-
 	port := flag.Int("port", 5433, "Port Number")
 	replicas := flag.String("replicas", "", "replica regions")
 	flag.Parse()
@@ -54,7 +52,9 @@ func main() {
 		if err != nil {
 			continue
 		}
-		go handleConnection(conn)
+
+		writer := bufio.NewWriter(conn)
+		go handleConnection(conn, writer)
 
 	}
 

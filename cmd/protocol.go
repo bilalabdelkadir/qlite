@@ -1,13 +1,26 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
-	"net"
+	"io"
 	"strconv"
 )
 
-func HandleError(conn net.Conn, err error) {
+func writeUint32(val uint32) []byte {
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, val)
+	return buf
+}
+
+func writeUint16(val uint16) []byte {
+	buf := make([]byte, 2)
+	binary.BigEndian.PutUint16(buf, val)
+	return buf
+}
+
+func HandleError(w io.Writer, err error) {
 	var buf bytes.Buffer
 	var payload bytes.Buffer
 
@@ -22,43 +35,51 @@ func HandleError(conn net.Conn, err error) {
 	payload.WriteByte(0) // end marker
 
 	buf.WriteByte(MsgErrorResponse)
-	binary.Write(&buf, binary.BigEndian, uint32(payload.Len()+4))
+	buf.Write(writeUint32(uint32(payload.Len() + 4)))
 	buf.Write(payload.Bytes())
 
-	conn.Write(buf.Bytes())
-}
-
-func ReadyForQuery(conn net.Conn, isInTransaction bool) {
-	conn.Write([]byte{MsgReadyForQuery})
-	binary.Write(conn, binary.BigEndian, uint32(5))
-	if isInTransaction {
-		conn.Write([]byte{TxStatusInTransaction})
-	} else {
-		conn.Write([]byte{TxStatusIdle})
+	w.Write(buf.Bytes())
+	if bw, ok := w.(*bufio.Writer); ok {
+		bw.Flush()
 	}
 }
 
-func SendDataRow(conn net.Conn, values []string) {
-	conn.Write([]byte{MsgDataRow})
+func ReadyForQuery(w io.Writer, isInTransaction bool) {
+	w.Write([]byte{MsgReadyForQuery})
+	w.Write(writeUint32(5))
+	if isInTransaction {
+		w.Write([]byte{TxStatusInTransaction})
+	} else {
+		w.Write([]byte{TxStatusIdle})
+	}
+
+	if bw, ok := w.(*bufio.Writer); ok {
+		bw.Flush()
+	}
+
+}
+
+func SendDataRow(w io.Writer, values []string) {
+	w.Write([]byte{MsgDataRow})
 
 	payloadLength := 2
 	for _, val := range values {
 		payloadLength += 4 + len(val)
 	}
 
-	binary.Write(conn, binary.BigEndian, uint32(payloadLength+4))
-	binary.Write(conn, binary.BigEndian, uint16(len(values)))
+	w.Write(writeUint32(uint32(payloadLength + 4)))
+	w.Write(writeUint16(uint16(len(values))))
 
 	for _, val := range values {
-		binary.Write(conn, binary.BigEndian, uint32(len(val)))
-		conn.Write([]byte(val))
+		w.Write(writeUint32(uint32(len(val))))
+		w.Write([]byte(val))
 	}
 }
-func SendCommandComplete(conn net.Conn, statement string, rowsAffected int) {
+func SendCommandComplete(w io.Writer, statement string, rowsAffected int) {
 	var cmdBuf bytes.Buffer
 	command := ExtractCommand(statement)
 
-	conn.Write([]byte{MsgCommandComplete})
+	w.Write([]byte{MsgCommandComplete})
 
 	switch command {
 	case "INSERT":
@@ -79,14 +100,14 @@ func SendCommandComplete(conn net.Conn, statement string, rowsAffected int) {
 
 	cmdBuf.WriteByte(0)
 
-	binary.Write(conn, binary.BigEndian, uint32(cmdBuf.Len()+4))
+	w.Write(writeUint32(uint32(cmdBuf.Len() + 4)))
 
-	conn.Write(cmdBuf.Bytes())
+	w.Write(cmdBuf.Bytes())
 }
 
-func SendRowDescription(conn net.Conn, columnNames []string) {
+func SendRowDescription(w io.Writer, columnNames []string) {
 
-	conn.Write([]byte{MsgRowDescription})
+	w.Write([]byte{MsgRowDescription})
 
 	// Each column field: name + null terminator + tableOID(4) + columnIndex(2) + typeOID(4) + typeSize(2) + typeModifier(4) + formatCode(2)
 	const perColumnOverhead = 1 + 4 + 2 + 4 + 2 + 4 + 2 // 19 bytes of fixed fields per column
@@ -95,19 +116,19 @@ func SendRowDescription(conn net.Conn, columnNames []string) {
 		payloadLength += len(columnName) + perColumnOverhead
 	}
 
-	binary.Write(conn, binary.BigEndian, uint32(payloadLength+2+4)) // +2 for column count, +4 for length field
-	binary.Write(conn, binary.BigEndian, uint16(len(columnNames)))
+	w.Write(writeUint32(uint32(payloadLength + 2 + 4))) // +2 for column count, +4 for length field
+	w.Write(writeUint16(uint16(len(columnNames))))
 
 	for _, columnName := range columnNames {
-		conn.Write([]byte(columnName))
-		conn.Write([]byte{0}) // null terminator
+		w.Write([]byte(columnName))
+		w.Write([]byte{0}) // null terminator
 
-		binary.Write(conn, binary.BigEndian, UnknownTableOID)
-		binary.Write(conn, binary.BigEndian, UnknownColumnIndex)
-		binary.Write(conn, binary.BigEndian, OIDText)
-		binary.Write(conn, binary.BigEndian, VariableLengthSize)
-		binary.Write(conn, binary.BigEndian, UnknownTypeModifier)
-		binary.Write(conn, binary.BigEndian, FormatText)
+		w.Write(writeUint32(UnknownTableOID))
+		w.Write(writeUint16(UnknownColumnIndex))
+		w.Write(writeUint32(OIDText))
+		w.Write(writeUint16(VariableLengthSize))
+		w.Write(writeUint32(UnknownTypeModifier))
+		w.Write(writeUint16(FormatText))
 	}
 
 }

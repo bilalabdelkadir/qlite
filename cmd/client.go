@@ -36,7 +36,7 @@ func HandleSslRequest(conn net.Conn) []byte {
 	}
 }
 
-func HandleStartup(conn net.Conn, length []byte) (*sql.DB, string, error) {
+func HandleStartup(conn net.Conn, w io.Writer, length []byte) (*sql.DB, string, error) {
 	bodyLength := binary.BigEndian.Uint32(length)
 	bodyBuffer := make([]byte, bodyLength-8)
 	io.ReadFull(conn, bodyBuffer)
@@ -50,15 +50,15 @@ func HandleStartup(conn net.Conn, length []byte) (*sql.DB, string, error) {
 		payload[parts[i]] = parts[i+1]
 	}
 
-	conn.Write([]byte{MsgAuthentication})
-	binary.Write(conn, binary.BigEndian, uint32(8))
-	binary.Write(conn, binary.BigEndian, uint32(0)) // AuthenticationOk
+	w.Write([]byte{MsgAuthentication})
+	binary.Write(w, binary.BigEndian, uint32(8))
+	binary.Write(w, binary.BigEndian, uint32(0)) // AuthenticationOk
 
 	// Send ParameterStatus messages
-	SendParameterStatus(conn, "standard_conforming_strings", "on")
-	SendParameterStatus(conn, "client_encoding", "UTF8")
-	SendParameterStatus(conn, "server_version", "16.0")
-	SendParameterStatus(conn, "integer_datetimes", "on")
+	SendParameterStatus(w, "standard_conforming_strings", "on")
+	SendParameterStatus(w, "client_encoding", "UTF8")
+	SendParameterStatus(w, "server_version", "16.0")
+	SendParameterStatus(w, "integer_datetimes", "on")
 
 	db, err := GetOrCreateDb(payload["database"])
 	if err != nil {
@@ -67,7 +67,7 @@ func HandleStartup(conn net.Conn, length []byte) (*sql.DB, string, error) {
 	return db, payload["database"], nil
 }
 
-func SendParameterStatus(conn net.Conn, name, value string) error {
+func SendParameterStatus(w io.Writer, name, value string) error {
 	var payload bytes.Buffer
 	payload.WriteString(name)
 	payload.WriteByte(0)
@@ -79,23 +79,23 @@ func SendParameterStatus(conn net.Conn, name, value string) error {
 	binary.Write(&msg, binary.BigEndian, uint32(payload.Len()+4))
 	msg.Write(payload.Bytes())
 
-	_, err := conn.Write(msg.Bytes())
+	_, err := w.Write(msg.Bytes())
 	return err
 }
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, w io.Writer) {
 	isInTransaction := false
 
 	lengthBuffer := HandleSslRequest(conn)
-	db, dbName, err := HandleStartup(conn, lengthBuffer)
+	db, dbName, err := HandleStartup(conn, w, lengthBuffer)
 	if err != nil {
 		conn.Close()
 		return
 	}
 
 	for {
-		ReadyForQuery(conn, isInTransaction)
-		statement, err := HandleStatement(conn)
+		ReadyForQuery(w, isInTransaction)
+		statement, err := HandleStatement(conn, w)
 		if err != nil {
 			break
 		}
@@ -110,12 +110,12 @@ func handleConnection(conn net.Conn) {
 		isRead := IsReadQuery(statement) && !isInTransaction && len(replicaUrls) > 0
 
 		if isRead {
-			if err := handleReadQuery(conn, dbName, statement); err != nil {
+			if err := handleReadQuery(w, dbName, statement); err != nil {
 				break
 			}
 		} else {
 
-			if err := handleWriteQuery(conn, dbName, statement, db); err != nil {
+			if err := handleWriteQuery(w, dbName, statement, db); err != nil {
 				break
 			}
 		}
@@ -124,7 +124,7 @@ func handleConnection(conn net.Conn) {
 
 }
 
-func handleReadQuery(conn net.Conn, dbName string, statement string) error {
+func handleReadQuery(w io.Writer, dbName string, statement string) error {
 	index := atomic.AddUint64(&counter, 1) % uint64(len(replicaUrls))
 
 	randomReplicaURL := replicaUrls[int(index)]
@@ -140,7 +140,7 @@ func handleReadQuery(conn net.Conn, dbName string, statement string) error {
 	if err != nil {
 		log.Println(err)
 		delete(connections[dbName], randomReplicaURL)
-		HandleError(conn, err)
+		HandleError(w, err)
 		return nil
 	}
 
@@ -168,19 +168,19 @@ func handleReadQuery(conn net.Conn, dbName string, statement string) error {
 			return err
 		}
 
-		_, err = conn.Write([]byte(msgType))
+		_, err = w.Write([]byte(msgType))
 		if err != nil {
 			log.Println(err)
 			return err
 		}
 
-		_, err = conn.Write([]byte(lenBuf))
+		_, err = w.Write([]byte(lenBuf))
 		if err != nil {
 			log.Println(err)
 			return err
 		}
 
-		_, err = conn.Write([]byte(msgBuf))
+		_, err = w.Write([]byte(msgBuf))
 		if err != nil {
 			log.Println(err)
 			return err
@@ -191,21 +191,14 @@ func handleReadQuery(conn net.Conn, dbName string, statement string) error {
 	}
 }
 
-func handleWriteQuery(conn net.Conn, dbName string, statement string, db *sql.DB) error {
-	columns, rows, rowsAffected, err := HandleExecute(db, statement)
+func handleWriteQuery(w io.Writer, dbName string, statement string, db *sql.DB) error {
+	rowsAffected, err := HandleExecute(db, w, statement)
 	if err != nil {
-		HandleError(conn, err)
+		HandleError(w, err)
 		return nil
 	}
-	if columns != nil {
-		SendRowDescription(conn, columns)
-		for _, row := range rows {
-			SendDataRow(conn, row)
-		}
-		SendCommandComplete(conn, statement, rowsAffected)
-	} else {
-		SendCommandComplete(conn, statement, rowsAffected)
-	}
+
+	SendCommandComplete(w, statement, rowsAffected)
 
 	for _, replicaUrl := range replicaUrls {
 		go func(url string) {

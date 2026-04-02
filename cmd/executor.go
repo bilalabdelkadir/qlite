@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -39,16 +40,17 @@ func ExtractCommand(statement string) string {
 
 }
 
-func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]string, rowsAffected int, err error) {
+func HandleExecute(db *sql.DB, w io.Writer, statement string) (int, error) {
 	command := ExtractCommand(statement)
 
+	rowCount := 0
 	switch command {
 	case "SET":
-		return nil, nil, 0, nil
+		return 0, nil
 	case "BRANCH":
 		parts := strings.Fields(statement)
 		if len(parts) < 4 || strings.ToUpper(parts[2]) != "TO" {
-			return nil, nil, 0, fmt.Errorf("invalid BRANCH statement: expected format 'BRANCH <source> TO <target>;'")
+			return 0, fmt.Errorf("invalid BRANCH statement: expected format 'BRANCH <source> TO <target>;'")
 		}
 
 		source := parts[1]
@@ -57,36 +59,36 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 
 		file, err := os.Open(source + ".db")
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("failed to open source database '%s.db': %v", source, err)
+			return 0, fmt.Errorf("failed to open source database '%s.db': %v", source, err)
 		}
 		defer file.Close()
 
 		newFile, err := os.Create(target + ".db")
 		if err != nil {
 			absPath, _ := filepath.Abs(target + ".db")
-			return nil, nil, 0, fmt.Errorf("failed to create target database '%s' at '%s': %v", target+".db", absPath, err)
+			return 0, fmt.Errorf("failed to create target database '%s' at '%s': %v", target+".db", absPath, err)
 		}
 		defer newFile.Close()
 
 		_, err = io.Copy(newFile, file)
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("failed to copy data from '%s.db' to '%s.db': %v", source, target, err)
+			return 0, fmt.Errorf("failed to copy data from '%s.db' to '%s.db': %v", source, target, err)
 		}
 
-		return nil, nil, 1, nil
+		return 1, nil
 
 	case "SELECT":
 		rows, err := db.Query(statement)
 		if err != nil {
-			return nil, nil, 0, err
+			return 0, err
 		}
 		defer rows.Close()
 
 		cols, err := rows.Columns()
 		if err != nil {
-			return nil, nil, 0, err
+			return 0, err
 		}
-		var results [][]string
+		SendRowDescription(w, cols)
 
 		for rows.Next() {
 			values := make([]interface{}, len(cols))
@@ -97,35 +99,46 @@ func HandleExecute(db *sql.DB, statement string) (columns []string, rows [][]str
 
 			err = rows.Scan(valuePtrs...)
 			if err != nil {
-				return nil, nil, 0, err
+				return 0, err
 			}
 			row := make([]string, len(cols))
+
 			for i, val := range values {
-				if val != nil {
-					row[i] = fmt.Sprintf("%v", val)
+				if b, ok := val.([]byte); ok {
+					row[i] = string(b) // TEXT or BLOB
+				} else if s, ok := val.(string); ok {
+					row[i] = s // TEXT
+				} else if n, ok := val.(int64); ok {
+					row[i] = strconv.FormatInt(n, 10) // INTEGER
+				} else if f, ok := val.(float64); ok {
+					row[i] = strconv.FormatFloat(f, 'f', -1, 64) // REAL
+				} else if val == nil {
+					row[i] = "NULL" // NULL
 				} else {
-					row[i] = "NULL"
+					row[i] = fmt.Sprintf("%v", val) // fallback, should rarely happen
 				}
 			}
-			results = append(results, row)
+			SendDataRow(w, row)
+			rowCount++
+
 		}
 
-		return cols, results, len(results), nil
+		return rowCount, nil
 
 	case "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER":
 		res, err := db.Exec(statement)
 		if err != nil {
-			return nil, nil, 0, err
+			return 0, err
 		}
 		rowsAffected, _ := res.RowsAffected()
-		return nil, nil, int(rowsAffected), nil
+		return int(rowsAffected), nil
 
 	default:
-		return nil, nil, 0, fmt.Errorf("unsupported SQL command: %s", command)
+		return 0, fmt.Errorf("unsupported SQL command: %s", command)
 	}
 }
 
-func HandleStatement(conn net.Conn) (string, error) {
+func HandleStatement(conn net.Conn, w io.Writer) (string, error) {
 	typeBuffer := make([]byte, 1)
 
 	io.ReadFull(conn, typeBuffer)
@@ -133,7 +146,7 @@ func HandleStatement(conn net.Conn) (string, error) {
 	msgType := typeBuffer[0]
 
 	if msgType != MsgQuery {
-		HandleError(conn, fmt.Errorf("unsupported message type: %c", msgType))
+		HandleError(w, fmt.Errorf("unsupported message type: %c", msgType))
 		return "", fmt.Errorf("unsupported message type: %c", msgType)
 	}
 

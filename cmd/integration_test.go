@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
@@ -24,8 +25,9 @@ func TestIntegration(t *testing.T) {
 			if err != nil {
 				t.Errorf("test integration failed to listen.")
 			}
+			writer := bufio.NewWriter(conn)
 
-			go handleConnection(conn)
+			go handleConnection(conn, writer)
 		}
 	}()
 
