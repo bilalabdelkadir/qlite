@@ -206,13 +206,33 @@ QLite is optimized for low-latency query execution:
 
 ### Benchmark
 
-Using `SELECT 1` with 2 clients x 500 queries:
+Tested with 2 clients, 500 queries each, simple protocol, both on localhost:
 
-| Metric | QLite | PostgreSQL |
-|---|---|---|
-| Avg latency | ~750us | ~210us |
-| QPS | ~1,300 | ~4,700 |
-| Ratio | ~3.6x slower | baseline |
+**SELECT 1 (read baseline)**
+
+| Metric | QLite | PostgreSQL | Ratio |
+|---|---|---|---|
+| p50 latency | ~50µs | ~180µs | 3-4x faster |
+| p95 latency | ~110µs | ~500µs | 4-5x faster |
+| QPS | ~25,000 | ~7,000 | 3-4x faster |
+
+**SELECT rows (read with data)**
+
+| Metric | QLite | PostgreSQL | Ratio |
+|---|---|---|---|
+| p50 latency | ~60µs | ~190µs | 3x faster |
+| p95 latency | ~400µs | ~800µs | 2x faster |
+| QPS | ~16,000 | ~6,000 | 2-3x faster |
+
+**INSERT (single writer, 200 queries)**
+
+| Metric | QLite | PostgreSQL | Ratio |
+|---|---|---|---|
+| p50 latency | ~470µs | ~220µs | 2x slower |
+| p95 latency | ~1.5ms | ~800µs | 2x slower |
+| QPS | ~1,700 | ~3,200 | 2x slower |
+
+QLite dominates reads due to SQLite's in-process execution (no network hop, no query planner overhead). Write latency is higher due to SQLite's single-writer model and fsync behavior — this is the gap that libSQL's write concurrency aims to close.
 
 ## Wire Protocol Details
 
@@ -231,6 +251,45 @@ Using `SELECT 1` with 2 clients x 500 queries:
 | ReadyForQuery | `Z` | Server ready, includes transaction status (`I` or `T`) |
 
 **Type system:** All columns are reported as TEXT (OID 25) regardless of actual SQLite type. Values are converted to strings before transmission.
+
+## PostgreSQL Compatibility
+
+QLite implements ~40-45% of what a typical PostgreSQL client expects. The core read/write path over the simple query protocol works. Any client or ORM using simple mode (e.g., `pgx` with `QueryExecModeSimpleProtocol`, `psql`, `psycopg2`) works out of the box.
+
+### What works
+
+| Feature | Status |
+|---|---|
+| Startup handshake | Supported |
+| SSL negotiation (reject) | Supported |
+| Simple Query protocol (`Q` messages) | Supported |
+| SELECT / INSERT / UPDATE / DELETE | Supported |
+| CREATE / DROP / ALTER | Supported |
+| SET (no-op) | Supported |
+| Transaction status tracking | Supported |
+| RowDescription / DataRow streaming | Supported |
+| CommandComplete / ErrorResponse | Supported |
+| ReadyForQuery with tx status | Supported |
+
+### What's missing
+
+| Feature | Status | Notes |
+|---|---|---|
+| Extended Query protocol | Not supported | No Parse/Bind/Execute — clients must use simple mode |
+| Prepared statements | Not supported | Requires extended protocol |
+| BEGIN / COMMIT / ROLLBACK | Tracked, not executed | Used for replica routing only — not passed to SQLite |
+| COPY protocol | Not supported | pgbench init requires this for bulk loading |
+| TRUNCATE | Not supported | Postgres-specific, no SQLite equivalent |
+| Multi-table DROP | Not supported | SQLite only supports single-table DROP |
+| WITH (fillfactor) | Not supported | Postgres storage parameters ignored |
+| NOTIFY / LISTEN | Not supported | |
+| Cursors | Not supported | |
+| Query cancellation | Not supported | |
+| Data type OIDs | All reported as TEXT (OID 25) | Values are string-converted |
+
+### pgbench compatibility
+
+pgbench init currently fails due to missing COPY protocol, transaction execution, and Postgres-specific DDL (`TRUNCATE`, `WITH` clauses). These are on the roadmap. The custom benchmark suite (`run_bench.sh`) tests QLite using the simple query protocol directly.
 
 ## Current Limitations
 
