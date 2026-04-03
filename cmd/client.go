@@ -29,6 +29,9 @@ func HandleSslRequest(conn net.Conn) []byte {
 		io.ReadFull(conn, newLengthBuffer)
 		io.ReadFull(conn, make([]byte, 4))
 		return newLengthBuffer
+	case GSSEncRequestCode:
+		conn.Write([]byte("N")) // 'N' = GSS encryption not supported
+		return HandleSslRequest(conn)
 	case ProtocolVersion3:
 		return lengthBuffer
 	default:

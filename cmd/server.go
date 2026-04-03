@@ -73,6 +73,8 @@ const (
 const (
 	// SSLRequestCode is the magic number clients send to request SSL.
 	SSLRequestCode uint32 = 80877103
+	// GSSEncRequestCode is the magic number clients send to request GSS encryption.
+	GSSEncRequestCode uint32 = 80877104
 	// ProtocolVersion3 is the PostgreSQL 3.0 protocol version number.
 	ProtocolVersion3 uint32 = 196608
 )

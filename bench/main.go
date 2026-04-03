@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,56 +16,99 @@ import (
 )
 
 func main() {
+	url := flag.String("url", "postgres://postgres@localhost:5433/benchdb", "database URL")
+	query := flag.String("query", "SELECT 1", "SQL query to benchmark")
+	setup := flag.String("setup", "", "SQL to run once before benchmark (e.g. CREATE TABLE)")
+	clients := flag.Int("clients", 2, "number of concurrent clients")
+	queries := flag.Int("queries", 500, "queries per client")
+	label := flag.String("label", "", "benchmark label for output")
+	flag.Parse()
 
 	ctx := context.Background()
 
-	dbUrl := "postgres://postgres@localhost:5433/benchdb"
-	// dbUrl := "postgresql://admin:2334@localhost:5432/mini_inventory"
-	numClients := 2
-	queriesPerClient := 500
-	sqlQuery := "SELECT 1"
+	config, err := pgx.ParseConfig(*url)
+	if err != nil {
+		log.Fatalf("failed to parse config: %v", err)
+	}
+	config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
-	fmt.Printf("Running benchmark: %d clients × %d queries each = %d total queries\n",
-		numClients, queriesPerClient, numClients*queriesPerClient)
+	// run setup queries if provided (split on ; for multiple statements)
+	if *setup != "" {
+		conn, err := pgx.ConnectConfig(ctx, config)
+		if err != nil {
+			log.Fatalf("setup connection failed: %v", err)
+		}
+		for _, stmt := range strings.Split(*setup, ";") {
+			stmt = strings.TrimSpace(stmt)
+			if stmt == "" {
+				continue
+			}
+			if _, err := conn.Exec(ctx, stmt); err != nil {
+				log.Fatalf("setup query failed: %v", err)
+			}
+		}
+		conn.Close(ctx)
+	}
 
-	startTime := time.Now()
+	total := *clients * *queries
+	if *label != "" {
+		fmt.Printf("[%s] ", *label)
+	}
+	fmt.Printf("%d clients × %d queries = %d total\n", *clients, *queries, total)
 
+	latencies := make([]time.Duration, 0, total)
+	var mu sync.Mutex
 	var wg sync.WaitGroup
-	wg.Add(numClients)
+	wg.Add(*clients)
 
-	for c := 0; c < numClients; c++ {
-		go func(clientID int) {
-			config, err := pgx.ParseConfig(dbUrl)
-			if err != nil {
-				log.Fatalf("failed to parse config: %v", err)
-			}
-			config.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
-			conn, err := pgx.ConnectConfig(context.Background(), config)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
-				log.Fatalf("failed to connect: %v", err)
-			}
+	start := time.Now()
+
+	for c := 0; c < *clients; c++ {
+		go func(id int) {
 			defer wg.Done()
-			defer conn.Close(context.Background())
-			for i := 0; i < queriesPerClient; i++ {
-				_, err := conn.Exec(ctx, sqlQuery)
-				if err != nil {
-					log.Printf("Client %d query error: %v", clientID, err)
-				}
+			conn, err := pgx.ConnectConfig(ctx, config)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "client %d connect failed: %v\n", id, err)
+				return
 			}
+			defer conn.Close(ctx)
+
+			local := make([]time.Duration, 0, *queries)
+			for i := 0; i < *queries; i++ {
+				t := time.Now()
+				if _, err := conn.Exec(ctx, *query); err != nil {
+					log.Printf("client %d query error: %v", id, err)
+				}
+				local = append(local, time.Since(t))
+			}
+
+			mu.Lock()
+			latencies = append(latencies, local...)
+			mu.Unlock()
 		}(c)
 	}
 
 	wg.Wait()
+	elapsed := time.Since(start)
 
-	elapsed := time.Since(startTime)
-	totalQueries := numClients * queriesPerClient
-	avgLatency := elapsed / time.Duration(totalQueries)
-	qps := float64(totalQueries) / elapsed.Seconds()
+	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 
-	fmt.Println("Benchmark finished!")
-	fmt.Println("Total time:", elapsed)
-	fmt.Println("Average latency per query:", avgLatency)
-	fmt.Printf("QPS: %.2f\n", qps)
+	p50 := percentile(latencies, 50)
+	p95 := percentile(latencies, 95)
+	p99 := percentile(latencies, 99)
+	qps := float64(len(latencies)) / elapsed.Seconds()
 
+	fmt.Printf("  p50: %v  p95: %v  p99: %v\n", p50, p95, p99)
+	fmt.Printf("  QPS: %.0f  Total: %v\n\n", qps, elapsed)
+}
+
+func percentile(sorted []time.Duration, pct float64) time.Duration {
+	if len(sorted) == 0 {
+		return 0
+	}
+	idx := int(math.Ceil(pct/100*float64(len(sorted)))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	return sorted[idx]
 }
