@@ -204,36 +204,6 @@ QLite is optimized for low-latency query execution:
 - **Streaming results** — rows sent to the client as they're scanned from SQLite, not buffered in memory
 - **Eager connection warmup** — `db.Ping()` on first database access prevents cold start latency on the first query
 
-### Benchmark
-
-Tested with 2 clients, 500 queries each, simple protocol, both on localhost:
-
-**SELECT 1 (read baseline)**
-
-| Metric | QLite | PostgreSQL | Ratio |
-|---|---|---|---|
-| p50 latency | ~50µs | ~180µs | 3-4x faster |
-| p95 latency | ~110µs | ~500µs | 4-5x faster |
-| QPS | ~25,000 | ~7,000 | 3-4x faster |
-
-**SELECT rows (read with data)**
-
-| Metric | QLite | PostgreSQL | Ratio |
-|---|---|---|---|
-| p50 latency | ~60µs | ~190µs | 3x faster |
-| p95 latency | ~400µs | ~800µs | 2x faster |
-| QPS | ~16,000 | ~6,000 | 2-3x faster |
-
-**INSERT (single writer, 200 queries)**
-
-| Metric | QLite | PostgreSQL | Ratio |
-|---|---|---|---|
-| p50 latency | ~470µs | ~220µs | 2x slower |
-| p95 latency | ~1.5ms | ~800µs | 2x slower |
-| QPS | ~1,700 | ~3,200 | 2x slower |
-
-QLite dominates reads due to SQLite's in-process execution (no network hop, no query planner overhead). Write latency is higher due to SQLite's single-writer model and fsync behavior — this is the gap that libSQL's write concurrency aims to close.
-
 ## Wire Protocol Details
 
 **Supported protocol:** Simple Query only (message type `Q`)
