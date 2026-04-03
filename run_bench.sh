@@ -38,7 +38,7 @@ start_qlite() {
     rm -f benchdb.db
     ./qlite -port "$QLITE_PORT" &
     QLITE_PID=$!
-    until nc -z localhost "$QLITE_PORT" 2>/dev/null; do sleep 0.2; done
+    sleep 1
 }
 
 stop_qlite() {
