@@ -18,5 +18,16 @@ func HandleTenantDb(dbName string) (*sql.DB, error) {
 		return nil, err
 	}
 
+	var mode string
+	err = db.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if mode != "wal" {
+		db.Close()
+		return nil, fmt.Errorf("failed to enable WAL mode, got: %s", mode)
+	}
+
 	return db, nil
 }
